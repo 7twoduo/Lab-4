@@ -2,7 +2,7 @@
 Each Step Wait for terraform to run and complete
 Wait for completion
 Wait for completion
-Nah Ill just force you to wai
+Nah Ill just force you to wait
 
 
 1st run terraform apply -auto-approve in Japan
