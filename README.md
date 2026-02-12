@@ -4,6 +4,7 @@ Wait for completion
 Wait for completion
 Nah Ill just force you to wait
 
+                                  WORK FLOW
 
 1st run terraform apply -auto-approve in Japan
 
