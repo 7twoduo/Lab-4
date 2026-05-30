@@ -1,104 +1,231 @@
 #!/bin/bash
-
-apt-get update -y
-apt-get install -y curl apt-transport-https ca-certificates gnupg
-
-echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" \
-  | tee /etc/apt/sources.list.d/google-cloud-sdk.list
-
-curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-  | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
-
-apt-get update -y
-apt-get install -y google-cloud-cli
-
-
+[ "$${CRLF_FIXED:-0}" = "1" ] || { export CRLF_FIXED=1; exec /bin/bash <(tr -d '\r' < "$0"); } #
 set -euo pipefail
 
-# Explanation (Chewbacca): The Wookiee does not trust public networks; he makes the clinic self-contained.
-# This script:
-# 1) installs nginx + python
-# 2) generates a self-signed cert
-# 3) hosts a tiny HTTPS app endpoint
-# 4) includes a DB connect test to Tokyo RDS over the VPN corridor
-
-TOKYO_RDS_HOST="${TOKYO_RDS_HOST}"
-TOKYO_RDS_PORT="${TOKYO_RDS_PORT}"
-TOKYO_RDS_USER="${TOKYO_RDS_USER}"
-SECRET_NAME="${SECRET_NAME}"
+export DEBIAN_FRONTEND=noninteractive
 
 apt-get update -y
-apt-get install -y nginx python3 python3-pip jq
+apt-get install -y python3 python3-pip python3-venv
 
-pip3 install --no-cache-dir pymysql
+mkdir -p /opt/rdsapp
 
-# Fetch DB password from Secret Manager (no TF state leakage)
-DB_PASS="$(gcloud secrets versions access latest --secret="${SECRET_NAME}")"
+cat >/etc/rdsapp.env <<ENV
+DB_HOST=${jsonencode(TOKYO_RDS_HOST)}
+DB_PORT=${jsonencode(TOKYO_RDS_PORT)}
+DB_USER=${jsonencode(TOKYO_RDS_USER)}
+DB_PASS=${jsonencode(DB_PASS)}
+DB_NAME="labdb"
+APP_PORT="80"
+SECRET_NAME=${jsonencode(SECRET_NAME)}
+ENV
 
-mkdir -p /etc/nginx/certs
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout /etc/nginx/certs/self.key \
-  -out /etc/nginx/certs/self.crt \
-  -subj "/CN=nihonmachi-internal.local"
+python3 -m venv /opt/rdsapp/venv
+/opt/rdsapp/venv/bin/pip install --upgrade pip
+/opt/rdsapp/venv/bin/pip install flask pymysql
 
-cat > /var/www/html/index.html <<EOF
-<h1>Nihonmachi Clinic (Private)</h1>
-<p>Only reachable via VPN corridor.</p>
-EOF
+cat >/opt/rdsapp/app.py <<'PY'
+import os
+import html
+import pymysql
+from flask import Flask, request, redirect
 
-cat > /usr/local/bin/rds_test.py <<'PY'
-import os, pymysql, json, datetime
+DB_HOST = os.environ.get("DB_HOST")
+DB_PORT = int(os.environ.get("DB_PORT", "3306"))
+DB_USER = os.environ.get("DB_USER")
+DB_PASS = os.environ.get("DB_PASS")
+DB_NAME = os.environ.get("DB_NAME", "labdb")
+APP_PORT = int(os.environ.get("APP_PORT", "8888"))
 
-host = os.environ.get("TOKYO_RDS_HOST")
-port = int(os.environ.get("TOKYO_RDS_PORT","3306"))
-user = os.environ.get("TOKYO_RDS_USER")
-pw   = os.environ.get("TOKYO_RDS_PASS")
-db   = os.environ.get("TOKYO_RDS_DB","chewbacca")
+app = Flask(__name__)
 
-def main():
-    # Minimal proof: write a timestamp row then read it back.
-    conn = pymysql.connect(host=host, port=port, user=user, password=pw, database=db, connect_timeout=5)
-    with conn.cursor() as cur:
-        cur.execute("CREATE TABLE IF NOT EXISTS clinic_ping (id INT AUTO_INCREMENT PRIMARY KEY, ts VARCHAR(64))")
-        ts = datetime.datetime.utcnow().isoformat()
-        cur.execute("INSERT INTO clinic_ping (ts) VALUES (%s)", (ts,))
-        conn.commit()
-        cur.execute("SELECT ts FROM clinic_ping ORDER BY id DESC LIMIT 1")
-        row = cur.fetchone()
+def get_conn(use_db=True):
+    return pymysql.connect(
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASS,
+        port=DB_PORT,
+        database=DB_NAME if use_db else None,
+        autocommit=True
+    )
+
+def page(title, body):
+    return f"""
+    <!doctype html>
+    <html>
+    <head>
+      <title>{title}</title>
+      <style>
+        body {{
+          font-family: Arial, sans-serif;
+          background: #0f172a;
+          color: #e5e7eb;
+          margin: 0;
+          padding: 40px;
+        }}
+        .card {{
+          max-width: 760px;
+          margin: auto;
+          background: #111827;
+          border: 1px solid #334155;
+          border-radius: 14px;
+          padding: 28px;
+          box-shadow: 0 10px 30px rgba(0,0,0,.35);
+        }}
+        h1, h2, h3 {{ color: #38bdf8; }}
+        input {{
+          padding: 12px;
+          width: 70%;
+          border-radius: 8px;
+          border: 1px solid #475569;
+          background: #020617;
+          color: white;
+        }}
+        button, .btn {{
+          padding: 12px 16px;
+          border: 0;
+          border-radius: 8px;
+          background: #2563eb;
+          color: white;
+          cursor: pointer;
+          text-decoration: none;
+          display: inline-block;
+          margin: 6px 4px 6px 0;
+        }}
+        button:hover, .btn:hover {{ background: #1d4ed8; }}
+        table {{
+          width: 100%;
+          border-collapse: collapse;
+          margin-top: 18px;
+        }}
+        th, td {{
+          padding: 12px;
+          border-bottom: 1px solid #334155;
+          text-align: left;
+        }}
+        th {{ color: #93c5fd; }}
+        .muted {{ color: #94a3b8; }}
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        {body}
+      </div>
+    </body>
+    </html>
+    """
+
+def get_notes_html():
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT id, note FROM notes ORDER BY id DESC;")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if not rows:
+            return "<p class='muted'>No notes in the database yet.</p>"
+
+        out = """
+        <h3>Database Records</h3>
+        <table>
+          <tr><th>ID</th><th>Note</th></tr>
+        """
+        for r in rows:
+            out += f"<tr><td>{r[0]}</td><td>{html.escape(r[1])}</td></tr>"
+        out += "</table>"
+        return out
+
+    except Exception:
+        return "<p class='muted'>Database not initialized yet. Click Initialize DB first.</p>"
+
+@app.route("/")
+def home():
+    body = f"""
+    <h1>GCP VM → Tokyo RDS Notes App</h1>
+    <p class="muted">Simple Flask app running on Debian 12 and connecting to the remote MySQL database.</p>
+
+    <a class="btn" href="/init">Initialize DB</a>
+    <a class="btn" href="/list">Refresh Database</a>
+    <a class="btn" href="/health">Health Check</a>
+
+    <h3>Add Note</h3>
+    <form action="/add" method="get">
+      <input name="note" placeholder="Type a note..." required>
+      <button type="submit">Add Note</button>
+    </form>
+
+    {get_notes_html()}
+    """
+    return page("GCP RDS Notes App", body)
+
+@app.route("/health")
+def health():
+    return "healthy", 200
+
+@app.route("/init")
+def init_db():
+    conn = get_conn(use_db=False)
+    cur = conn.cursor()
+    cur.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME};")
+    cur.execute(f"USE {DB_NAME};")
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS notes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            note VARCHAR(255) NOT NULL
+        );
+    """)
+    cur.close()
     conn.close()
-    print(json.dumps({"status":"ok","latest_ts": row[0]}, indent=2))
+    return redirect("/")
+
+@app.route("/add", methods=["POST", "GET"])
+def add_note():
+    note = request.args.get("note", "").strip()
+    if not note:
+        return page(
+            "Missing Note",
+            "<h2>Missing note</h2><p>Try adding a note from the home page.</p><a class='btn' href='/'>Go Back</a>"
+        ), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO notes(note) VALUES(%s);", (note,))
+    cur.close()
+    conn.close()
+    return redirect("/")
+
+@app.route("/list")
+def list_notes():
+    body = f"""
+    <h2>Notes Database</h2>
+    <a class="btn" href="/">Home</a>
+    <a class="btn" href="/list">Refresh</a>
+    {get_notes_html()}
+    """
+    return page("Notes Database", body)
 
 if __name__ == "__main__":
-    main()
+    app.run(host="0.0.0.0", port=APP_PORT)
 PY
 
-chmod +x /usr/local/bin/rds_test.py
+cat >/etc/systemd/system/rdsapp.service <<'SERVICE'
+[Unit]
+Description=GCP Debian VM to Tokyo RDS Notes App
+After=network-online.target
+Wants=network-online.target
 
-# Nginx HTTPS config
-cat > /etc/nginx/sites-available/default <<EOF
-server {
-  listen 443 ssl;
-  ssl_certificate /etc/nginx/certs/self.crt;
-  ssl_certificate_key /etc/nginx/certs/self.key;
+[Service]
+WorkingDirectory=/opt/rdsapp
+EnvironmentFile=/etc/rdsapp.env
+ExecStart=/opt/rdsapp/venv/bin/python /opt/rdsapp/app.py
+Restart=always
+RestartSec=5
 
-  location /health {
-    return 200 "ok\n";
-  }
+[Install]
+WantedBy=multi-user.target
+SERVICE
 
-  location / {
-    root /var/www/html;
-    index index.html;
-  }
-}
-EOF
-
-systemctl restart nginx
-
-# Export env for DB test
-cat > /etc/profile.d/tokyo_rds.sh <<EOF
-export TOKYO_RDS_HOST="${TOKYO_RDS_HOST}"
-export TOKYO_RDS_PORT="${TOKYO_RDS_PORT}"
-export TOKYO_RDS_USER="${TOKYO_RDS_USER}"
-export TOKYO_RDS_PASS="${DB_PASS}"
-export TOKYO_RDS_DB="chewbacca"
-EOF
+systemctl daemon-reload
+systemctl enable rdsapp
+systemctl restart rdsapp

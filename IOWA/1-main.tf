@@ -1,36 +1,37 @@
 # Providers
 terraform {
   required_version = ">= 1.5.0"
+
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = "~> 5.0"
+      version = ">= 5.0"
     }
   }
+
   backend "local" {
     path = "secrets/terraform.tfstate"
   }
 }
 
 provider "google" {
-  project     = var.gcp_project_id
-  credentials = file("${path.module}/iowa-link.json")
-  region      = var.gcp_region
-  zone        = var.gcp_zone
+  project = var.gcp_project_id
+  region  = var.gcp_region
+  zone    = var.gcp_zone
 }
 
-# Network and Subnet resources or VPC and subnets
+############################################################
+# VPC + Private Subnet
+############################################################
 
-# Explanation: Chewbacca builds the tunnels; Nihonmachi VPC is the NY clinic’s private street grid.
-#  This is the VPC architecture
 resource "google_compute_network" "nihonmachi_vpc01" {
   name                    = "nihonmachi-vpc01"
   auto_create_subnetworks = false
 
-  #routing_mode                              = "GLOBAL"
-  #bgp_best_path_selection_mode              = "STANDARD"
+  # Keep regional routing unless you explicitly need GLOBAL for your VPN design.
+  # routing_mode = "GLOBAL"
 }
-# This is the public subnet—because some resources may need internet access (NAT, bastion, etc).
+
 resource "google_compute_subnetwork" "nihonmachi_subnet01" {
   name                     = "nihonmachi-subnet01"
   ip_cidr_range            = var.nihonmachi_subnet_cidr
@@ -39,57 +40,80 @@ resource "google_compute_subnetwork" "nihonmachi_subnet01" {
   private_ip_google_access = true
 }
 
-# Proxy ONLY subnet for Google Managed Proxy LB
+############################################################
+# Proxy-Only Subnet for Regional External Application LB
+############################################################
+
 resource "google_compute_subnetwork" "nihonmachi_proxy_only_uscentral1" {
   name          = "nihonmachi-proxy-only-uscentral1"
   region        = var.gcp_region
   network       = google_compute_network.nihonmachi_vpc01.id
-  ip_cidr_range = "10.250.200.0/24"   # pick an unused range
+  ip_cidr_range = "10.250.200.0/24"
 
   purpose = "REGIONAL_MANAGED_PROXY"
   role    = "ACTIVE"
 }
 
-# Firewall or security group resources
+############################################################
+# Firewall Rules
+############################################################
 
-# # Explanation: Chewbacca guards the clinic door—HTTPS is allowed ONLY from inside the corridor.
-resource "google_compute_firewall" "nihonmachi_allow_https_from_vpn01" {
-  name = "nihonmachi-allow-https-from-vpn01"
-  for_each = {
-    uno = google_compute_network.nihonmachi_vpc01.name
-  }
-  network = each.value
+# Allows the regional external HTTP load balancer proxy subnet to reach
+# the private instances on port 80.
+resource "google_compute_firewall" "nihonmachi_allow_http_from_lb_proxy01" {
+  name    = "nihonmachi-allow-http-from-lb-proxy01"
+  network = google_compute_network.nihonmachi_vpc01.name
 
   allow {
     protocol = "tcp"
-    ports    = ["443"]
+    ports    = ["80"]
+  }
+
+  source_ranges = [
+    google_compute_subnetwork.nihonmachi_proxy_only_uscentral1.ip_cidr_range
+  ]
+
+  target_tags = ["nihonmachi-app"]
+}
+
+# Allows Google health checks to reach the private instances on port 80.
+resource "google_compute_firewall" "nihonmachi_allow_http_hc01" {
+  name    = "nihonmachi-allow-http-hc01"
+  network = google_compute_network.nihonmachi_vpc01.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80"]
+  }
+
+  source_ranges = [
+    "35.191.0.0/16",
+    "130.211.0.0/22"
+  ]
+
+  target_tags = ["nihonmachi-app"]
+}
+
+# Keeps VPN/BGP private-path testing available from AWS/on-prem CIDRs.
+# This lets private CIDRs in var.allowed_vpn_cidrs reach the app directly on HTTP.
+resource "google_compute_firewall" "nihonmachi_allow_http_from_vpn01" {
+  name    = "nihonmachi-allow-http-from-vpn01"
+  network = google_compute_network.nihonmachi_vpc01.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80"]
   }
 
   source_ranges = var.allowed_vpn_cidrs
   target_tags   = ["nihonmachi-app"]
 }
 
-resource "google_compute_firewall" "nihonmachi_allow_https_from_vpn03" {
-  name = "nihonmachi-allow-https-from-vpn03"
-  for_each = {
-    uno = google_compute_network.nihonmachi_vpc01.name
-  }
-  network = each.value
-
-  allow {
-    protocol = "tcp"
-    ports    = ["443"]
-  }
-
-  source_ranges = var.allowed_vpn_cidrs
-  target_tags   = ["nihonmachi-app"]
-}
-resource "google_compute_firewall" "nihonmachi_allow_https_from_vpn02" {
-  name = "nihonmachi-allow-https-from-vpn02"
-  for_each = {
-    uno = google_compute_network.nihonmachi_vpc01.name
-  }
-  network = each.value
+# Optional: keeping your original VPN database-style rule close to the original.
+# Remove this if nothing in GCP should receive inbound MySQL from the VPN.
+resource "google_compute_firewall" "nihonmachi_allow_mysql_from_vpn01" {
+  name    = "nihonmachi-allow-mysql-from-vpn01"
+  network = google_compute_network.nihonmachi_vpc01.name
 
   allow {
     protocol = "tcp"
@@ -100,50 +124,65 @@ resource "google_compute_firewall" "nihonmachi_allow_https_from_vpn02" {
   target_tags   = ["nihonmachi-app"]
 }
 
-# Explanation: Allow internal health checks (ILB) to reach instances.
-resource "google_compute_firewall" "nihonmachi_allow_hc01" {
-  name    = "nihonmachi-allow-hc01"
+# Allows SSH from anywhere.
+# This is open to the internet, so only use it for quick testing.
+resource "google_compute_firewall" "nihonmachi_allow_ssh_from_everywhere01" {
+  name    = "nihonmachi-allow-ssh-from-everywhere01"
   network = google_compute_network.nihonmachi_vpc01.name
 
   allow {
     protocol = "tcp"
-    ports    = ["443"]
+    ports    = ["22"]
   }
 
-  # GCP health check ranges (students can keep this as-is; instructor can provide exact ranges later if desired)
-  source_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
-  target_tags   = ["nihonmachi-app"]
+  source_ranges = [
+    "0.0.0.0/0"
+  ]
+
+  target_tags = ["nihonmachi-app"]
 }
 
-# Load Balancer for Google Compute Instances
-# This is for health checking the instances in the MIG, it is attached to the ??????????
+############################################################
+# Regional HTTP Health Check
+############################################################
+
 resource "google_compute_region_health_check" "hc" {
   name   = "app-hc"
   region = var.gcp_region
 
-  https_health_check {
+  check_interval_sec  = 5
+  timeout_sec         = 5
+  healthy_threshold   = 2
+  unhealthy_threshold = 3
+
+  http_health_check {
     port_specification = "USE_SERVING_PORT"
-    request_path       = "/"
+    request_path       = "/health"
   }
 }
 
+############################################################
+# Regional External HTTP Load Balancer
+############################################################
 
-# This is the backbone of the Load Balancer
 resource "google_compute_region_backend_service" "backend" {
   name                  = "app-backend"
   region                = var.gcp_region
-  protocol              = "HTTPS"
-  load_balancing_scheme = "INTERNAL_MANAGED"
-  port_name             = "https"
+  protocol              = "HTTP"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  port_name             = "http"
   health_checks         = [google_compute_region_health_check.hc.id]
 
   backend {
-    group = google_compute_region_instance_group_manager.nihonmachi_mig01.instance_group
-    max_utilization = 0.8
+    group           = google_compute_region_instance_group_manager.nihonmachi_mig01.instance_group
     balancing_mode  = "UTILIZATION"
+    max_utilization = 0.8
     capacity_scaler = 1.0
   }
-  depends_on = [ google_compute_region_instance_group_manager.nihonmachi_mig01 ]
+
+  depends_on = [
+    google_compute_region_instance_group_manager.nihonmachi_mig01
+  ]
 }
 
 resource "google_compute_region_url_map" "urlmap" {
@@ -152,76 +191,83 @@ resource "google_compute_region_url_map" "urlmap" {
   default_service = google_compute_region_backend_service.backend.id
 }
 
-resource "google_compute_region_ssl_certificate" "nihonmachi_cert01" {
-  name   = "nihonmachi-cert01"
-  region = var.gcp_region
-
-  private_key = file("${path.module}/hidden_domain/privkey.pem")
-  certificate = file("${path.module}/hidden_domain/fullchain.pem")
-}
-
-# # For simplicity, the instances terminate TLS themselves (Nginx on VM).
-# # ILB can be configured with certs too, but that’s "Lab 4A-3".
-resource "google_compute_region_target_https_proxy" "nihonmachi_httpsproxy01" {
-  name    = "nihonmachi-httpsproxy01"
+resource "google_compute_region_target_http_proxy" "nihonmachi_httpproxy01" {
+  name    = "nihonmachi-httpproxy01"
   region  = var.gcp_region
   url_map = google_compute_region_url_map.urlmap.id
-  ssl_certificates = [google_compute_region_ssl_certificate.nihonmachi_cert01.id]
 }
 
+resource "google_compute_address" "nihonmachi_lb_ip01" {
+  name         = "nihonmachi-lb-ip01"
+  region       = var.gcp_region
+  address_type = "EXTERNAL"
+}
 
-
-# Private forwarding rule (internal IP)
 resource "google_compute_forwarding_rule" "nihonmachi_fr01" {
   name                  = "nihonmachi-fr01"
   region                = var.gcp_region
-  load_balancing_scheme = "INTERNAL_MANAGED"
-  ip_protocol           = "TCP"
-  port_range            = "443"
-  network               = google_compute_network.nihonmachi_vpc01.id
-  subnetwork            = google_compute_subnetwork.nihonmachi_subnet01.id 
-  target                = google_compute_region_target_https_proxy.nihonmachi_httpsproxy01.id
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+
+  ip_protocol = "TCP"
+  port_range  = "80"
+  ip_address  = google_compute_address.nihonmachi_lb_ip01.id
+
+  network = google_compute_network.nihonmachi_vpc01.id
+  target  = google_compute_region_target_http_proxy.nihonmachi_httpproxy01.id
+
+  depends_on = [
+    google_compute_subnetwork.nihonmachi_proxy_only_uscentral1
+  ]
 }
 
-#########################################                SECRETS MANAGER GCP
-# Explanation: Chewbacca grants only what’s needed—this VM can read ONE secret, not the whole galaxy.
+############################################################
+# Service Account + Secret Access
+############################################################
+
 resource "google_service_account" "nihonmachi_sa01" {
   account_id   = "nihonmachi-sa01"
   display_name = "nihonmachi-sa01"
 }
 
-# # # Allow reading secrets
 resource "google_project_iam_member" "nihonmachi_secret_accessor01" {
   project = var.gcp_project_id
   role    = "roles/secretmanager.secretAccessor"
   member  = "serviceAccount:${google_service_account.nihonmachi_sa01.email}"
 }
 
+############################################################
+# Cloud Router + NAT
+############################################################
 
-# Explanation: Chewbacca dislikes public IPs; Cloud NAT lets VMs update safely without exposing services.
-variable "enable_router" {
-  description = "Enable the GCP router and NAT"
-  type        = bool
-  default     = true
-}
-
+# GCP Cloud Router
+# https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_router
+#
+# This router is needed by the HA VPN/BGP code below.
+# Your HA VPN section already references:
+# google_compute_router.gcp-to-aws-cloud-router[0].name
+#
+# So this resource needs count = 1 to keep that [0] reference valid.
 resource "google_compute_router" "gcp-to-aws-cloud-router" {
-  count = var.enable_router ? 1 : 0
+  count = 1
+
   name    = "nihonmachi-router01"
   region  = var.gcp_region
   network = google_compute_network.nihonmachi_vpc01.id
+
   bgp {
     asn               = 65000
     advertise_mode    = "CUSTOM"
     advertised_groups = ["ALL_SUBNETS"]
+
+    # Advertise the GCP private subnet to AWS over BGP.
     advertised_ip_ranges {
       range = google_compute_subnetwork.nihonmachi_subnet01.ip_cidr_range
     }
   }
 }
 
-
-# Nat gateway for private instances
+# Explanation: Chewbacca dislikes public IPs; Cloud NAT lets private VMs update safely
+# without exposing the VM directly to the internet.
 resource "google_compute_router_nat" "nihonmachi_nat01" {
   name                               = "nihonmachi-nat01"
   router                             = google_compute_router.gcp-to-aws-cloud-router[0].name
@@ -230,28 +276,19 @@ resource "google_compute_router_nat" "nihonmachi_nat01" {
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 }
 
-# Managed Instance Group and Instance Template for Compute Instances
+############################################################
+# Private Instance Template
+############################################################
 
-locals {
-  startup_script = templatefile("${path.module}/startup.sh.tftpl", {
-    TOKYO_RDS_HOST = try(data.terraform_remote_state.japan[0].outputs.db_hostname, "not-created-yet")
-    TOKYO_RDS_PORT = try(data.terraform_remote_state.japan[0].outputs.db_port, "not-created-yet")
-    TOKYO_RDS_USER = try(data.terraform_remote_state.japan[0].outputs.db_username, "not-created-yet")
-    SECRET_NAME    = try(data.terraform_remote_state.japan[0].outputs.secret_name, "not-created-yet")
-    DB_PASS        = try(data.terraform_remote_state.japan[0].outputs.db_password, "not-created-yet")
-  })
-}
-# # Explanation: Chewbacca clones disciplined soldiers—MIG gives you controlled, replaceable compute.
 resource "google_compute_instance_template" "nihonmachi_tpl01" {
   name_prefix  = "nihonmachi-tpl01-"
   machine_type = "e2-medium"
   tags         = ["nihonmachi-app"]
 
-
-  # service_account {
-  #   email  = google_service_account.nihonmachi_sa01.email
-  #   scopes = ["cloud-platform"]
-  # }
+  service_account {
+    email  = google_service_account.nihonmachi_sa01.email
+    scopes = ["cloud-platform"]
+  }
 
   disk {
     source_image = "projects/debian-cloud/global/images/family/debian-12"
@@ -261,39 +298,49 @@ resource "google_compute_instance_template" "nihonmachi_tpl01" {
 
   network_interface {
     subnetwork = google_compute_subnetwork.nihonmachi_subnet01.id
-    # No external IP (private-only)
+
+    # No access_config block.
+    # This keeps the VM private-only with no public IP.
   }
 
   metadata = {
     startup-script = local.startup_script
   }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
+############################################################
+# Regional Managed Instance Group
+############################################################
 
-
-# # Explanation: Nihonmachi MIG scales staff demand without creating new databases or new compliance nightmares.
 resource "google_compute_region_instance_group_manager" "nihonmachi_mig01" {
   name   = "nihonmachi-mig01"
   region = var.gcp_region
-  named_port {
-    name = "https"
-    port = 443
-  }
 
+  named_port {
+    name = "http"
+    port = 80
+  }
 
   version {
     instance_template = google_compute_instance_template.nihonmachi_tpl01.id
   }
-  
+
   base_instance_name = "nihonmachi-app"
-  # target_size        = 2
 
   auto_healing_policies {
     health_check      = google_compute_region_health_check.hc.id
     initial_delay_sec = 300
   }
 }
-# Auto Scaling for the MIG
+
+############################################################
+# Autoscaler
+############################################################
+
 resource "google_compute_region_autoscaler" "foobar" {
   name   = "my-region-autoscaler"
   region = var.gcp_region
@@ -310,6 +357,8 @@ resource "google_compute_region_autoscaler" "foobar" {
   }
 }
 
+
+
 #####################################################################################################################################
 #                                               VPN CONNECTION TO AWS
 #####################################################################################################################################
@@ -317,12 +366,7 @@ resource "google_compute_region_autoscaler" "foobar" {
 ###############################################                    First Workflow
 # GCP Cloud Router
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_router
-
-variable "first_workflow_enabled" {
-  description = "Enable when the other transit gateway is created"
-  type        = bool
-  default     = true
-}
+# Workflow Uno
 # GCP HA VPN Gateway
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_ha_vpn_gateway
 resource "google_compute_ha_vpn_gateway" "gcp-to-aws-vpn-gw" {
@@ -333,12 +377,7 @@ resource "google_compute_ha_vpn_gateway" "gcp-to-aws-vpn-gw" {
 }
 
 ###############################################                    Second Workflow
-
-variable "second_workflow_enabled" {
-  description = "Enable when the other transit gateway is created"
-  type        = bool
-  default     = true
-}
+# Workflow Dos
 # GCP External VPN Gateway
 # https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_external_vpn_gateway
 
@@ -524,24 +563,4 @@ resource "google_compute_router_peer" "gcp-router-peer-tunnel3" {
   peer_asn                  = local.aws-asn
   advertised_route_priority = 100
   interface                 = google_compute_router_interface.gcp-router-interface-tunnel3[0].name
-}
-
-
-
-
-
-resource "google_compute_firewall" "nihonmachi_allow_ssh_from_vpn02" {
-  name = "nihonmachi-allow-ssh-from-vpn02"
-  for_each = {
-    uno = google_compute_network.nihonmachi_vpc01.name
-  }
-  network = each.value
-  priority = 100 
-  
-  allow {
-    protocol = "all"
-  }
-
-  source_ranges = ["0.0.0.0/0"]
-  target_tags   = ["test"]
 }
