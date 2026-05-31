@@ -57,8 +57,6 @@ echo "IOWA and Sao-Paulo destroy completed"
 #      DESTROY JAPAN AFTER IOWA AND SAO-PAULO
 #################################################
 
-destroy_dir "JAPAN" "JAPAN"
-
 #################################################
 #      REVERSING BUILD FLAGS AFTER DESTROY
 #      ONLY CHANGING 4-control.tf FILES
@@ -88,6 +86,8 @@ reset_japan() {
   echo "JAPAN reset complete"
   sed -n "${FIRST_WORKFLOW_LINE}p;${TRANSIT_PEERING_LINE}p;${TRANSIT_PEERING_ROUTE_LINE}p;${JAPAN_FIRST_WORKFLOW_LINE}p;${JAPAN_SECOND_WORKFLOW_LINE}p;${JAPAN_THREE_WORKFLOW_LINE}p" "$CONTROL_FILE"
 }
+
+destroy_dir "JAPAN" "JAPAN"
 
 reset_sao_paulo() {
   echo "Resetting Sao-Paulo flags and import block"
