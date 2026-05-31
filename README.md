@@ -41,6 +41,7 @@
 * [🏗️ Architecture](#️-architecture)
 * [📊 Architecture Diagrams](#-architecture-diagrams)
 * [🖥️ Project Overview](#️-project-overview)
+* [🎥 Demo Videos](#-demo-videos)
 * [🧰 Technology Stack](#-technology-stack)
 * [☁️ Cloud Services Used](#️-cloud-services-used)
 * [📁 Project Structure](#-project-structure)
