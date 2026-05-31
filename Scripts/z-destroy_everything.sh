@@ -86,9 +86,19 @@ reset_japan() {
   echo "JAPAN reset complete"
   sed -n "${FIRST_WORKFLOW_LINE}p;${TRANSIT_PEERING_LINE}p;${TRANSIT_PEERING_ROUTE_LINE}p;${JAPAN_FIRST_WORKFLOW_LINE}p;${JAPAN_SECOND_WORKFLOW_LINE}p;${JAPAN_THREE_WORKFLOW_LINE}p" "$CONTROL_FILE"
 }
+####################################################################
+#        DEPENDENCY PROBLEM WITH THE JAPAN SIDE OF THINGS
+####################################################################
+(
+  set -Eeuo pipefail
+  reset_japan
+) &
+JAPAN_RESET_PID=$!
 
 destroy_dir "JAPAN" "JAPAN"
-
+####################################################################
+#          Onto the next thing
+####################################################################
 reset_sao_paulo() {
   echo "Resetting Sao-Paulo flags and import block"
 
@@ -131,13 +141,6 @@ reset_iowa() {
 #################################################
 #      RESET FILES IN PARALLEL
 #################################################
-
-(
-  set -Eeuo pipefail
-  reset_japan
-) &
-JAPAN_RESET_PID=$!
-
 (
   set -Eeuo pipefail
   reset_sao_paulo
