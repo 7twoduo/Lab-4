@@ -168,6 +168,26 @@ The application layer validates that the infrastructure is not theoretical. It p
 
 ---
 
+## 🎥 Demo Videos
+
+This section provides visual proof of the deployed multi-cloud architecture in action.  
+The recordings demonstrate live application connectivity across cloud providers, regions, and private network paths, validating that the AWS, GCP, and Japan database components were successfully integrated.
+
+### AWS São Paulo to Japan
+
+This demo validates connectivity from the AWS São Paulo application layer to the Japan-hosted database environment.  
+It confirms that the application can reach the backend database over the intended cloud network path and that the cross-region AWS architecture is functioning correctly.
+
+https://github.com/user-attachments/assets/2ea12e3b-d528-4f82-ae48-b46c005f5ae9
+
+### GCP Iowa to Japan
+
+This demo validates connectivity from the GCP Iowa application layer to the Japan-hosted database environment.  
+It confirms that the GCP workload can communicate with the AWS-hosted database over the configured hybrid cloud path, proving the multi-cloud routing and private connectivity design.
+
+https://github.com/user-attachments/assets/d70e02f6-f842-4fad-92d9-9ec6975027d4
+
+
 ## 🧰 Technology Stack
 
 | Layer | Technology |
