@@ -21,6 +21,12 @@ run_terraform_build() {
   terraform init
   terraform fmt
   terraform validate
+  if [ -f "startup.sh.tftpl" ]; then
+    echo "[INFO] Found startup.sh.tftpl - removing CRLF line endings"
+    sed -i 's/\r$//' startup.sh.tftpl
+  else
+    echo "[WARN] startup.sh.tftpl not found in $(pwd)"
+  fi
 
   echo "Building ${LABEL}..."
   terraform apply -auto-approve
