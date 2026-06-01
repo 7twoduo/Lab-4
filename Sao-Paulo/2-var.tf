@@ -79,7 +79,7 @@ variable "db_username" {
 variable "sns_email" {
   description = "Put Your email below"
   type        = string
-  default     = "markedsync@gmail.com"
+  default     = "your-email@gmail.com" # add your email here
   #Remember you have to confirm your subscription for this to work
 }
 variable "parameter_location" {
@@ -91,17 +91,17 @@ variable "s3_bucket_no_access" {
   description = "No public access to bucket"
   type        = bool
   default     = true
-}
-variable "root_domain_name" {
+}      
+variable "root_domain_name" {          ################## CHNAGE TO YOUR DOMAIN
   description = "The domain name for the ALB"
   type        = string
-  default     = "unshieldedhollow.click"
+  default     = "your-domain"  # Change this to your domain like lion.com or lion.click or whatever
 }
-variable "route53_domain_name" {
-  description = "value"
-  type        = string
-  default     = "www.unshieldedhollow.click"
-}
+# variable "route53_domain_name" {
+#   description = "value"
+#   type        = string
+#   default     = "www.unshieldedhollow.click"
+# }
 
 variable "alb_domain_name" {
   description = "This is a sub-domain for the root domain"
