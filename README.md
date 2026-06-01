@@ -354,36 +354,114 @@ JAPAN/
 IOWA/
 Sao-Paulo/
 ```
-
 ### 1. Update Required Values
 
-Go into each environment folder and update the project-specific variables.
+Before running Terraform, update the project-specific variables inside each environment folder.
+
+You must have the following ready:
+
+* A valid email address for SNS notifications
+* A valid GCP project ID
+* A registered domain name that you control
+* Access to update DNS records for that domain
+
+The domain is required because the Sao-Paulo environment uses Route 53, CloudFront, DNS records, and HTTPS routing.
+
+---
 
 #### JAPAN
 
 Update the email value used for notifications.
 
-Look for the email variable, such as:
+Go to:
+
+```text
+JAPAN/2-var.tf
+```
+
+Look for the email variable around line 78:
 
 ```hcl
 sns_email = "your-email@example.com"
 ```
 
-Replace it with your own email address.
+Replace it with your own email address:
+
+```hcl
+sns_email = "your-real-email@example.com"
+```
+
+---
+
+#### Sao-Paulo
+
+Update the email value used for notifications.
+
+Go to:
+
+```text
+Sao-Paulo/2-var.tf
+```
+
+Look for the email variable around line 82:
+
+```hcl
+sns_email = "your-email@example.com"
+```
+
+Replace it with your own email address:
+
+```hcl
+sns_email = "your-real-email@example.com"
+```
+
+Next, update the domain value.
+
+In the same file:
+
+```text
+Sao-Paulo/2-var.tf
+```
+
+Look for the domain variable around line 98.
+
+Example:
+
+```hcl
+root_domain_name = "your-domain.com"
+```
+
+Replace it with your own domain:
+
+```hcl
+root_domain_name = "example.com"
+```
+
+This must be a real domain that you own or control. You will need access to its DNS settings so the project can create or validate the required records.
+
+---
 
 #### IOWA
 
 Update the GCP project ID.
 
-Look for the GCP project variable, such as:
+Go to:
+
+```text
+IOWA/2-var.tf
+```
+
+Look for the GCP project variable:
 
 ```hcl
 gcp_project_id = "your-gcp-project-id"
 ```
 
-Replace it with your own GCP project ID.
+Replace it with your own GCP project ID:
 
-#### Sao-Paulo
+```hcl
+gcp_project_id = "my-real-gcp-project-id"
+```
 
 Update the email value and any project-specific domain or notification settings.
 
