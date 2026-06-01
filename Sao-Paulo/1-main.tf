@@ -411,7 +411,7 @@ resource "time_sleep" "wait_for_ami_settle" {
   depends_on = [
     aws_instance.lab-ec2-app-public # or aws_ami, or aws_imagebuilder_image
   ]
-  create_duration = "120s"
+  create_duration = "200s"
 }
 #Snapshot for Golden AMI Free Tier Eligible
 
@@ -797,7 +797,7 @@ resource "aws_lb_target_group" "hidden_target_group" {
 
 import {
   to = aws_route53domains_registered_domain.unshieldedhollow
-  id = "unshieldedhollow.click" # Your domain here
+  id = var.root_domain_name # Your domain here
 }
 
 
@@ -1587,8 +1587,8 @@ resource "aws_cloudfront_distribution" "main" {
     allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
     cached_methods  = ["GET", "HEAD"]
 
-    cache_policy_id          = aws_cloudfront_cache_policy.api_no_cache[0].id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.api_origin[0].id
+    cache_policy_id            = aws_cloudfront_cache_policy.api_no_cache[0].id
+    origin_request_policy_id   = aws_cloudfront_origin_request_policy.api_origin[0].id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security_headers[0].id
 
     compress = true
