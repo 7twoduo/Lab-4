@@ -75,7 +75,7 @@ variable "db_username" {
 variable "sns_email" {
   description = "Put Your email below"
   type        = string
-  default     = "markedsync@gmail.com"
+  default     = "your-email@gmail.com"
   #Remember you have to confirm your subscription for this to work
 }
 variable "parameter_location" {
